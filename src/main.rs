@@ -99,8 +99,13 @@ fn cmd_help() -> ExitCode {
     println!("  mon-end                         End scene montage");
     println!("  [NAME]: [CONTENT]               Named character speech");
     println!("  [NAME]: ([PARENS]) [CONTENT]    Named character speech with parenthetical");
-    println!("  *                               Inline notes section");
-    println!("  ***                             End (notes section)");
+    println!("  *                               Inline comment");
+    println!("  ***                             File tail comment");
+    println!();
+    println!("Notes:");
+    println!("  Title and subtitle MUST be given in any 2 lines before regular content");
+    println!("  Any segment may be continued on a new line using '\\' character");
+    println!("  Empty lines may be placed anywhere for style, as they will be ignored");
 
     0.into()
 }

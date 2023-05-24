@@ -1,0 +1,55 @@
+.page {
+    font-family: "Courier New", monospace;
+    font-size: 12pt;
+    width: 8.25in;
+    padding-left: 1in;
+    padding-right: 1in;
+    box-sizing: border-box;
+}
+
+.title {
+    text-align: center;
+    font-weight: bold;
+    padding-top: 2in;
+    height: 0.5in;
+}
+
+.subtitle {
+    text-align: center;
+    font-weight: bold;
+    height: 7.25in;
+}
+
+.scene-num {
+    margin-bottom: 0.2in;
+    font-weight: bold;
+    display: inline-block;
+    width: 0.5in;
+}
+
+.header {
+    margin-bottom: 0.2in;
+    font-weight: bold;
+    display: inline-block;
+}
+
+.direct {
+    margin-bottom: 0.2in;
+    margin-left: 0.5in;
+}
+
+.name {
+    margin-left: 2.7in;
+    margin-right: 1.5in;
+}
+
+.parens {
+    margin-left: 2.1in;
+    margin-right: 1.5in;
+}
+
+.speech {
+    margin-left: 1.5in;
+    margin-right: 1.5in;
+    margin-bottom: 0.2in;
+}

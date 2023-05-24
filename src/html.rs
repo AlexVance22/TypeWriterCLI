@@ -13,7 +13,7 @@ pub enum HtmlError {
     #[error(transparent)]
     FormatError(#[from] std::fmt::Error),
     #[error("line {linenum} - invalid syntax (expected {expected} after {after})")]
-    SyntaxError {
+    SyntaxError{
         linenum: usize,
         expected: String,
         after: String,
@@ -99,13 +99,13 @@ impl<'a> Iterator for Segments<'a> {
             (_, line) = self.lines.next()?;
             if line.trim() == "***" {
                 self.term = true;
-                return Some((linenum, (kind.trim(), result)))
+                return Some((linenum + 1, (kind.trim(), result)))
             }
         }
 
         result.push(line.trim());
 
-        Some((linenum, (kind.trim(), result)))
+        Some((linenum + 1, (kind.trim(), result)))
     }
 }
 
@@ -141,7 +141,7 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
         }
 
         _ => {
-            let whole = format!("{} {}", kind, text);
+            let whole = format!("{} {}", kind.trim(), text.trim());
 
             if whole.contains(": (") {
                 if let Some(i) = whole.chars().position(|c| c == '(') {
@@ -160,6 +160,13 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
                 let name = whole[0..i].to_uppercase();
                 let text = &whole[(i+1)..whole.len()];
                 Ok(format!("<div class=\"name\">{name}</div>\n<div class=\"speech\">{text}</div>\n"))
+            } else if whole.starts_with('(') {
+                if whole.ends_with(')') {
+                    let text = whole.trim_start_matches(|c| c == '(').trim_end_matches(|c| c == ')');
+                    Ok(format!("<div class=\"parens\">({text})</div>"))
+                } else {
+                    Err(HtmlError::SyntaxError { linenum, expected: "parenthetical".to_string(), after: "".to_string() })
+                }
             } else {
                 Err(HtmlError::SyntaxError { linenum, expected: "mode declaration".to_string(), after: "new line".to_string() })
             }
@@ -205,3 +212,4 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
 
     Ok(fs::write(&cmd.html, html)?)
 }
+

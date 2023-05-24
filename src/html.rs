@@ -23,16 +23,16 @@ pub enum HtmlError {
 }
 
 
-pub fn strip_empty<'a>((_, line): &'a (usize, &str)) -> bool {
-    !(line.is_empty() || line.starts_with("* "))
-}
-
 pub fn trim_ignored<'a>((num, line): (usize, &str)) -> (usize, &str) {
     if line.contains("* ") {
         (num, line.split("* ").next().unwrap())
     } else {
         (num, line)
     }
+}
+
+pub fn strip_empty<'a>((_, line): &'a (usize, &str)) -> bool {
+    !line.trim().is_empty()
 }
 
 
@@ -45,74 +45,76 @@ impl<'a> Segments<'a> {
     pub fn new(src: &'a str) -> Self {
         Self{ lines: src.lines()
                         .enumerate()
-                        .filter(strip_empty)
                         .map(trim_ignored)
+                        .filter(strip_empty)
                         .collect::<Vec<(usize, &'a str)>>()
                         .into_iter(),
             term: false
         }
-        
     }
 
     fn next_as_line(&mut self) -> Option<(usize, Vec<&'a str>)> {
         if self.term == true { return None }
 
-        let mut result: Vec<&str> = Vec::new();
-        let (mut linenum, mut line) = self.lines.next()?;
+        let (linenum, mut line) = self.lines.next()?;
         
         if line.trim() == "***" {
             return None
         }
 
+        let mut result = Vec::new();
+
         while let Some(trimmed) = line.strip_suffix("\\") {
-            result.push(trimmed);
-            (linenum, line) = self.lines.next()?;
+            result.push(trimmed.trim());
+            (_, line) = self.lines.next()?;
             if line.trim() == "***" {
                 self.term = true;
                 return Some((linenum, result))
             }
         }
 
-        result.push(line);
+        result.push(line.trim());
 
         Some((linenum, result))
     }
 }
 
 impl<'a> Iterator for Segments<'a> {
-    type Item = (usize, Vec<&'a str>);
+    type Item = (usize, (&'a str, Vec<&'a str>));
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.term == true { return None }
 
-        let mut result: Vec<&str> = Vec::new();
-        let (mut linenum, mut line) = self.lines.next()?;
+        let (linenum, line) = self.lines.next()?;
         
         if line.trim() == "***" {
             return None
         }
 
+        let mut result = Vec::new();
+        let (kind, mut line) = line.split_once(char::is_whitespace).unwrap();
+
         while let Some(trimmed) = line.strip_suffix("\\") {
-            result.extend(trimmed.split_ascii_whitespace());
-            (linenum, line) = self.lines.next()?;
+            result.push(trimmed.trim());
+            (_, line) = self.lines.next()?;
             if line.trim() == "***" {
                 self.term = true;
-                return Some((linenum, result))
+                return Some((linenum, (kind.trim(), result)))
             }
         }
 
-        result.extend(line.split_ascii_whitespace());
+        result.push(line.trim());
 
-        Some((linenum, result))
+        Some((linenum, (kind.trim(), result)))
     }
 }
 
 
-fn get_line(toks: &[&str], linenum: usize, scene: &mut u32, title: &str) -> Result<String, HtmlError> {
-    let (kind, iter) = toks.split_first().ok_or(HtmlError::SyntaxError { linenum, expected: "mode declaration".to_string(), after: "new line".to_string() })?;
-    let text = iter.join(" ").replace("$title", title);
+fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &str) -> Result<String, HtmlError> {
+    let (kind, text) = toks;
+    let text = text.join(" ").replace("$title", title);
 
-    match *kind {
+    match kind {
         "montage" if  text.is_empty() => Ok("<div class=\"header\">BEGIN MONTAGE:</div>\n".to_string()),
         "mon-end" if  text.is_empty() => Ok("<div class=\"header\">END MONTAGE.</div>\n".to_string()),
         "direct"  if !text.is_empty() => Ok(format!("<div class=\"direct\">{text}</div>\n")),
@@ -139,7 +141,7 @@ fn get_line(toks: &[&str], linenum: usize, scene: &mut u32, title: &str) -> Resu
         }
 
         _ => {
-            let whole = toks.join(" ");
+            let whole = format!("{} {}", kind, text);
 
             if whole.contains(": (") {
                 if let Some(i) = whole.chars().position(|c| c == '(') {
@@ -183,20 +185,15 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
     let mut scene = 0u32;
 
     for (linenum, segment) in segments {
-        match segment.len() {
-            0 => unreachable!(),
-            _ => {
-                let line = get_line(&segment, linenum, &mut scene, &title)?;
-                if let Some(range) = &cmd.range {
-                    if range.contains(&scene) {
-                        write!(content, "{}", line)?
-                    } else if scene > range.end {
-                        break
-                    }
-                } else {
-                    write!(content, "{}", line)?
-                }
+        let line = get_line(segment, linenum, &mut scene, &title)?;
+        if let Some(range) = &cmd.range {
+            if range.contains(&scene) {
+                write!(content, "{}", line)?
+            } else if scene > range.end {
+                break
             }
+        } else {
+            write!(content, "{}", line)?
         }
     }
 

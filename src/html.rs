@@ -139,6 +139,7 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
     let whole = format!("{} {}", kind, text).trim().to_string();
 
     if patterns.scene.is_match(&whole) {
+        let whole = whole.strip_prefix("scene").unwrap_or(&whole).trim().to_string();
         *scene += 1;
         let count = 4 - scene.to_string().len();
         let mut pad = String::new();

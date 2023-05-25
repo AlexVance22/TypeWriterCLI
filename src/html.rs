@@ -2,6 +2,7 @@ use std::{
     fs,
     fmt::Write,
 };
+use regex::Regex;
 use thiserror::Error;
 use crate::CmdInfo;
 
@@ -92,7 +93,10 @@ impl<'a> Iterator for Segments<'a> {
         }
 
         let mut result = Vec::new();
-        let (kind, mut line) = line.split_once(char::is_whitespace).unwrap();
+        let (kind, mut line) = match line.split_once(char::is_whitespace) {
+            Some(vals) => vals,
+            None => return Some((linenum + 1, (line.trim(), result))),
+        };
 
         while let Some(trimmed) = line.strip_suffix("\\") {
             result.push(trimmed.trim());
@@ -110,9 +114,59 @@ impl<'a> Iterator for Segments<'a> {
 }
 
 
-fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &str) -> Result<String, HtmlError> {
+struct Patterns {
+    scene: Regex,
+    speech: Regex,
+    paren: Regex,
+    speechparen: Regex,
+}
+
+impl Default for Patterns {
+    fn default() -> Self {
+        Self{
+            scene: Regex::new("(INT\\.|EXT\\.) [^a-z]+ - [^a-z]+").unwrap(),
+            speech: Regex::new("[a-z]+(\\((V\\.O\\.|O\\.S\\.)\\))?: .+").unwrap(),
+            paren: Regex::new("\\([A-Z].*\\)").unwrap(),
+            speechparen: Regex::new("[a-z]+: \\([A-Z].*\\) .+").unwrap(),
+        }
+    }
+}
+
+
+fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &str, patterns: &Patterns) -> Result<String, HtmlError> {
     let (kind, text) = toks;
     let text = text.join(" ").replace("$title", title);
+    let whole = format!("{} {}", kind, text).trim().to_string();
+
+    if patterns.scene.is_match(&whole) {
+        *scene += 1;
+        let count = 4 - scene.to_string().len();
+        let mut pad = String::new();
+        for _ in 0..count {
+            write!(pad, "&nbsp;")?;
+        }
+        return Ok(format!("<div class=\"scene\"><h1>{pad}{scene} {}</h1></div>\n", whole))
+    } else if patterns.speechparen.is_match(&whole) {
+        if let Some(i) = whole.chars().position(|c| c == '(') {
+            if let Some(j) = whole.chars().position(|c| c == ')') {
+                if i < j {
+                    let name = whole[0..(i-2)].to_uppercase();
+                    let paren = &whole[(i+1)..j];
+                    let text = &whole[(j+2)..whole.len()];
+                    return Ok(format!("<div class=\"name\">{name}</div>\n<div class=\"parens\">({paren})</div>\n<div class=\"speech\">{text}</div>\n"))
+                }
+            }
+        }
+        return Err(HtmlError::SyntaxError { linenum, expected: "parenthetical".to_string(), after: "".to_string() })
+    } else if patterns.speech.is_match(&whole) {
+        let i = whole.chars().position(|c| c == ':').unwrap();
+        let name = whole[0..i].to_uppercase();
+        let text = &whole[(i+1)..whole.len()];
+        return Ok(format!("<div class=\"name\">{name}</div>\n<div class=\"speech\">{text}</div>\n"))
+    } else if patterns.paren.is_match(&whole) {
+        let text = whole.trim_start_matches(|c| c == '(').trim_end_matches(|c| c == ')');
+        return Ok(format!("<div class=\"parens\">({text})</div>"))
+    }
 
     match kind {
         "montage" if  text.is_empty() => Ok("<div class=\"header\">BEGIN MONTAGE:</div>\n".to_string()),
@@ -123,6 +177,7 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
         "subhead" if !text.is_empty() => Ok(format!("<div class=\"header\"><h2>{}</h2></div>\n", text.to_uppercase())),
         "trans"   if !text.is_empty() => Ok(format!("<div class=\"trans\">{}</div>\n", text.to_uppercase())),
         "chyron"  if !text.is_empty() => Ok(format!("<div class=\"direct\">CHYRON: {text}</div>\n")),
+        "TODO"    if  text.is_empty() => Ok(format!("<div class=\"header\">TODO =========================</div>\n")),
         "scene"   if !text.is_empty() => {
             *scene += 1;
             let count = 4 - scene.to_string().len();
@@ -141,8 +196,8 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
         }
 
         _ => {
-            let whole = format!("{} {}", kind.trim(), text.trim());
-
+            Err(HtmlError::SyntaxError { linenum, expected: "mode declaration".to_string(), after: "new line".to_string() })
+            /*
             if whole.contains(": (") {
                 if let Some(i) = whole.chars().position(|c| c == '(') {
                     if let Some(j) = whole.chars().position(|c| c == ')') {
@@ -170,6 +225,7 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
             } else {
                 Err(HtmlError::SyntaxError { linenum, expected: "mode declaration".to_string(), after: "new line".to_string() })
             }
+            */
         }
     }
 }
@@ -188,11 +244,12 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
     };
     let end = "</div></body></html>";
 
+    let patterns = Patterns::default();
     let mut content = String::new();
     let mut scene = 0u32;
 
     for (linenum, segment) in segments {
-        let line = get_line(segment, linenum, &mut scene, &title)?;
+        let line = get_line(segment, linenum, &mut scene, &title, &patterns)?;
         if let Some(range) = &cmd.range {
             if range.contains(&scene) {
                 write!(content, "{}", line)?

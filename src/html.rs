@@ -138,10 +138,7 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
         "scene"   if !text.is_empty() => {
             *scene += 1;
             let count = 4 - scene.to_string().len();
-            let mut pad = String::new();
-            for _ in 0..count {
-                write!(pad, "&nbsp;")?;
-            }
+            let pad = vec!["&nbsp;"; count].join("");
             Ok(format!("<div class=\"scene\"><h1>{pad}{scene} {}</h1></div>\n", text.to_uppercase()))
         }
 
@@ -156,13 +153,9 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
             let whole = format!("{} {}", kind, text).trim().to_string();
 
             if PAT_SCENE.is_match(&whole) {
-                let whole = whole.strip_prefix("scene").unwrap_or(&whole).trim().to_string();
                 *scene += 1;
                 let count = 4 - scene.to_string().len();
-                let mut pad = String::new();
-                for _ in 0..count {
-                    write!(pad, "&nbsp;")?;
-                }
+                let pad = vec!["&nbsp;"; count].join("");
                 Ok(format!("<div class=\"scene\"><h1>{pad}{scene} {}</h1></div>\n", whole))
             } else if PAT_SPEECH.is_match(&whole) {
                 let (name, content) = whole.split_once(':').unwrap();
@@ -171,9 +164,9 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
                 for pair in PAT_EXTRACT.captures_iter(content) {
                     for cap in pair.iter().skip(1).flatten() {
                         if cap.as_str().starts_with('(') {
-                            writeln!(result, "<div class=\"parens\">{}</div>", cap.as_str())?;
+                            writeln!(result, "<div class=\"parens\">{}</div>", cap.as_str().trim())?;
                         } else {
-                            writeln!(result, "<div class=\"speech\">{}</div>", cap.as_str())?;
+                            writeln!(result, "<div class=\"speech\">{}</div>", cap.as_str().trim())?;
                         }
                     }
                 }

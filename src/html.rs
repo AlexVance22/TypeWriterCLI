@@ -2,6 +2,7 @@ use std::{
     fs,
     fmt::Write,
 };
+use lazy_static::lazy_static;
 use regex::Regex;
 use thiserror::Error;
 use crate::CmdInfo;
@@ -24,7 +25,7 @@ pub enum HtmlError {
 }
 
 
-pub fn trim_ignored<'a>((num, line): (usize, &str)) -> (usize, &str) {
+pub fn trim_ignored((num, line): (usize, &str)) -> (usize, &str) {
     if line.contains("* ") {
         (num, line.split("* ").next().unwrap())
     } else {
@@ -32,7 +33,7 @@ pub fn trim_ignored<'a>((num, line): (usize, &str)) -> (usize, &str) {
     }
 }
 
-pub fn strip_empty<'a>((_, line): &'a (usize, &str)) -> bool {
+pub fn strip_empty((_, line): &(usize, &str)) -> bool {
     !line.trim().is_empty()
 }
 
@@ -55,7 +56,7 @@ impl<'a> Segments<'a> {
     }
 
     fn next_as_line(&mut self) -> Option<(usize, Vec<&'a str>)> {
-        if self.term == true { return None }
+        if self.term { return None }
 
         let (linenum, mut line) = self.lines.next()?;
         
@@ -65,7 +66,7 @@ impl<'a> Segments<'a> {
 
         let mut result = Vec::new();
 
-        while let Some(trimmed) = line.strip_suffix("\\") {
+        while let Some(trimmed) = line.strip_suffix('\\') {
             result.push(trimmed.trim());
             (_, line) = self.lines.next()?;
             if line.trim() == "***" {
@@ -84,7 +85,7 @@ impl<'a> Iterator for Segments<'a> {
     type Item = (usize, (&'a str, Vec<&'a str>));
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.term == true { return None }
+        if self.term { return None }
 
         let (linenum, line) = self.lines.next()?;
         
@@ -98,7 +99,7 @@ impl<'a> Iterator for Segments<'a> {
             None => return Some((linenum + 1, (line.trim(), result))),
         };
 
-        while let Some(trimmed) = line.strip_suffix("\\") {
+        while let Some(trimmed) = line.strip_suffix('\\') {
             result.push(trimmed.trim());
             (_, line) = self.lines.next()?;
             if line.trim() == "***" {
@@ -114,71 +115,26 @@ impl<'a> Iterator for Segments<'a> {
 }
 
 
-struct Patterns {
-    scene: Regex,
-    speech: Regex,
-    paren: Regex,
-    speechparen: Regex,
-}
-
-impl Default for Patterns {
-    fn default() -> Self {
-        Self{
-            scene: Regex::new("(INT\\.|EXT\\.) [^a-z]+ - [^a-z]+").unwrap(),
-            speech: Regex::new("[a-z]+(\\((V\\.O\\.|O\\.S\\.)\\))?: .+").unwrap(),
-            paren: Regex::new("\\([A-Z].*\\)").unwrap(),
-            speechparen: Regex::new("[a-z]+: \\([A-Z].*\\) .+").unwrap(),
-        }
+fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &str) -> Result<String, HtmlError> {
+    lazy_static! {
+        static ref PAT_SCENE: Regex = Regex::new(r"(INT\.|EXT\.) [^a-z]+ - [^a-z]+").unwrap();
+        static ref PAT_SPEECH: Regex = Regex::new(r"([a-z]+(?: \((?:O\.S\.|V\.O\.)\))?):\s+(?:(\([A-Z][^\)]*\) )?([^\(]+))+").unwrap();
+        static ref PAT_EXTRACT: Regex = Regex::new(r"\s*(\([^\)]+\))?((?:\s+[^\(]+)+)").unwrap();
     }
-}
 
-
-fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &str, patterns: &Patterns) -> Result<String, HtmlError> {
     let (kind, text) = toks;
     let text = text.join(" ").replace("$title", title);
-    let whole = format!("{} {}", kind, text).trim().to_string();
-
-    if patterns.scene.is_match(&whole) {
-        let whole = whole.strip_prefix("scene").unwrap_or(&whole).trim().to_string();
-        *scene += 1;
-        let count = 4 - scene.to_string().len();
-        let mut pad = String::new();
-        for _ in 0..count {
-            write!(pad, "&nbsp;")?;
-        }
-        return Ok(format!("<div class=\"scene\"><h1>{pad}{scene} {}</h1></div>\n", whole))
-    } else if patterns.speechparen.is_match(&whole) {
-        if let Some(i) = whole.chars().position(|c| c == '(') {
-            if let Some(j) = whole.chars().position(|c| c == ')') {
-                if i < j {
-                    let name = whole[0..(i-2)].to_uppercase();
-                    let paren = &whole[(i+1)..j];
-                    let text = &whole[(j+2)..whole.len()];
-                    return Ok(format!("<div class=\"name\">{name}</div>\n<div class=\"parens\">({paren})</div>\n<div class=\"speech\">{text}</div>\n"))
-                }
-            }
-        }
-        return Err(HtmlError::SyntaxError { linenum, expected: "parenthetical".to_string(), after: "".to_string() })
-    } else if patterns.speech.is_match(&whole) {
-        let i = whole.chars().position(|c| c == ':').unwrap();
-        let name = whole[0..i].to_uppercase();
-        let text = &whole[(i+1)..whole.len()];
-        return Ok(format!("<div class=\"name\">{name}</div>\n<div class=\"speech\">{text}</div>\n"))
-    } else if patterns.paren.is_match(&whole) {
-        let text = whole.trim_start_matches(|c| c == '(').trim_end_matches(|c| c == ')');
-        return Ok(format!("<div class=\"parens\">({text})</div>"))
-    }
 
     match kind {
         "montage" if  text.is_empty() => Ok("<div class=\"header\">BEGIN MONTAGE:</div>\n".to_string()),
         "mon-end" if  text.is_empty() => Ok("<div class=\"header\">END MONTAGE.</div>\n".to_string()),
+        "TODO"    if  text.is_empty() => Ok("<div class=\"header\">TODO =========================</div>\n".to_string()),
         "direct"  if !text.is_empty() => Ok(format!("<div class=\"direct\">{text}</div>\n")),
         "parens"  if !text.is_empty() => Ok(format!("<div class=\"parens\">({text})</div>\n")),
         "speech"  if !text.is_empty() => Ok(format!("<div class=\"speech\">{text}</div>\n")),
         "subhead" if !text.is_empty() => Ok(format!("<div class=\"header\"><h2>{}</h2></div>\n", text.to_uppercase())),
         "trans"   if !text.is_empty() => Ok(format!("<div class=\"trans\">{}</div>\n", text.to_uppercase())),
         "chyron"  if !text.is_empty() => Ok(format!("<div class=\"direct\">CHYRON: {text}</div>\n")),
-        "TODO"    if  text.is_empty() => Ok(format!("<div class=\"header\">TODO =========================</div>\n")),
         "scene"   if !text.is_empty() => {
             *scene += 1;
             let count = 4 - scene.to_string().len();
@@ -197,36 +153,34 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
         }
 
         _ => {
-            Err(HtmlError::SyntaxError { linenum, expected: "mode declaration".to_string(), after: "new line".to_string() })
-            /*
-            if whole.contains(": (") {
-                if let Some(i) = whole.chars().position(|c| c == '(') {
-                    if let Some(j) = whole.chars().position(|c| c == ')') {
-                        if i < j {
-                            let name = whole[0..(i-2)].to_uppercase();
-                            let paren = &whole[(i+1)..j];
-                            let text = &whole[(j+2)..whole.len()];
-                            return Ok(format!("<div class=\"name\">{name}</div>\n<div class=\"parens\">({paren})</div>\n<div class=\"speech\">{text}</div>\n"))
+            let whole = format!("{} {}", kind, text).trim().to_string();
+
+            if PAT_SCENE.is_match(&whole) {
+                let whole = whole.strip_prefix("scene").unwrap_or(&whole).trim().to_string();
+                *scene += 1;
+                let count = 4 - scene.to_string().len();
+                let mut pad = String::new();
+                for _ in 0..count {
+                    write!(pad, "&nbsp;")?;
+                }
+                Ok(format!("<div class=\"scene\"><h1>{pad}{scene} {}</h1></div>\n", whole))
+            } else if PAT_SPEECH.is_match(&whole) {
+                let (name, content) = whole.split_once(':').unwrap();
+                let mut result = String::new();
+                writeln!(result, "<div class=\"name\">{}</div>", name.to_ascii_uppercase())?;
+                for pair in PAT_EXTRACT.captures_iter(content) {
+                    for cap in pair.iter().skip(1).flatten() {
+                        if cap.as_str().starts_with('(') {
+                            writeln!(result, "<div class=\"parens\">{}</div>", cap.as_str())?;
+                        } else {
+                            writeln!(result, "<div class=\"speech\">{}</div>", cap.as_str())?;
                         }
                     }
                 }
-                Err(HtmlError::SyntaxError { linenum, expected: "parenthetical".to_string(), after: "".to_string() })
-            } else if whole.contains(": ") {
-                let i = whole.chars().position(|c| c == ':').unwrap();
-                let name = whole[0..i].to_uppercase();
-                let text = &whole[(i+1)..whole.len()];
-                Ok(format!("<div class=\"name\">{name}</div>\n<div class=\"speech\">{text}</div>\n"))
-            } else if whole.starts_with('(') {
-                if whole.ends_with(')') {
-                    let text = whole.trim_start_matches(|c| c == '(').trim_end_matches(|c| c == ')');
-                    Ok(format!("<div class=\"parens\">({text})</div>"))
-                } else {
-                    Err(HtmlError::SyntaxError { linenum, expected: "parenthetical".to_string(), after: "".to_string() })
-                }
+                Ok(result)
             } else {
                 Err(HtmlError::SyntaxError { linenum, expected: "mode declaration".to_string(), after: "new line".to_string() })
             }
-            */
         }
     }
 }
@@ -245,12 +199,11 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
     };
     let end = "</div></body></html>";
 
-    let patterns = Patterns::default();
     let mut content = String::new();
     let mut scene = 0u32;
 
     for (linenum, segment) in segments {
-        let line = get_line(segment, linenum, &mut scene, &title, &patterns)?;
+        let line = get_line(segment, linenum, &mut scene, &title)?;
         if let Some(range) = &cmd.range {
             if range.contains(&scene) {
                 write!(content, "{}", line)?

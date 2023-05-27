@@ -14,11 +14,16 @@ pub enum HtmlError {
     IoError(#[from] std::io::Error),
     #[error(transparent)]
     FormatError(#[from] std::fmt::Error),
-    #[error("line {linenum} - invalid syntax (expected {expected} after {after})")]
+    #[error("line {line} - invalid syntax (expected {expected} after {after})")]
     SyntaxError{
-        linenum: usize,
+        line: usize,
         expected: String,
         after: String,
+    },
+    #[error("line {line} - syntax for mode {mode} is invalid")]
+    BadContentError{
+        line: usize,
+        mode: String,
     },
     #[error("unknown html conversion error")]
     Unknown,
@@ -34,13 +39,27 @@ pub fn trim_ignored((num, line): (usize, &str)) -> (usize, &str) {
 }
 
 
-pub struct Segments<'a> {
+struct Segment<'a> {
+    line: usize,
+    mode: &'a str,
+    text: Vec<&'a str>,
+}
+
+struct Context {
+    scene: u32,
+    title: String,
+    subtitle: String,
+}
+
+
+
+struct Segments<'a> {
     lines: std::vec::IntoIter<(usize, &'a str)>,
     term: bool
 }
 
 impl<'a> Segments<'a> {
-    pub fn new(src: &'a str) -> Self {
+    fn new(src: &'a str) -> Self {
         Self{ lines: src.lines()
                         .enumerate()
                         .map(trim_ignored)
@@ -51,76 +70,64 @@ impl<'a> Segments<'a> {
         }
     }
 
-    fn next_as_line(&mut self) -> Option<(usize, Vec<&'a str>)> {
+    fn next_whole(&mut self) -> Option<(usize, Vec<&'a str>)> {
         if self.term { return None }
 
-        let (linenum, mut line) = self.lines.next()?;
+        let (line, mut val) = self.lines.next()?;
         
-        if line == "***" { return None }
+        if val == "***" { return None }
 
-        let mut result = Vec::new();
+        let mut text = Vec::new();
 
-        while let Some(trimmed) = line.strip_suffix('\\') {
-            result.push(trimmed.trim());
-            (_, line) = self.lines.next()?;
-            if line == "***" {
+        while let Some(trimmed) = val.strip_suffix('\\') {
+            text.push(trimmed.trim());
+            (_, val) = self.lines.next()?;
+            if val == "***" {
                 self.term = true;
-                return Some((linenum, result))
+                return Some((line, text))
             }
         }
 
-        result.push(line);
+        text.push(val);
 
-        Some((linenum, result))
+        Some((line, text))
     }
 }
 
 impl<'a> Iterator for Segments<'a> {
-    type Item = (usize, (&'a str, Vec<&'a str>));
+    type Item = Segment<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.term { return None }
+        let (line, mut text) = self.next_whole()?;
+        let first = text.remove(0);
 
-        let (linenum, line) = self.lines.next()?;
-        
-        if line == "***" { return None }
-
-        let mut result = Vec::new();
-        let (kind, mut line) = match line.split_once(char::is_whitespace) {
-            Some((kind, line)) => (kind.trim(), line.trim()),
-            None => return Some((linenum + 1, (line.trim(), result))),
-        };
-
-        while let Some(trimmed) = line.strip_suffix('\\') {
-            result.push(trimmed.trim());
-            (_, line) = self.lines.next()?;
-            if line == "***" {
-                self.term = true;
-                return Some((linenum + 1, (kind, result)))
-            }
+        if let Some((mode, rest)) = first.split_once(char::is_whitespace) {
+            text.insert(0, rest.trim());
+            Some(Segment{ line, mode, text })
+        } else {
+            Some(Segment{ line, mode: first.trim(), text })
         }
-
-        result.push(line);
-
-        Some((linenum + 1, (kind, result)))
     }
 }
 
 
-fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &str) -> Result<String, HtmlError> {
+fn get_line(segment: Segment, ctx: &mut Context) -> Result<String, HtmlError> {
     lazy_static! {
         static ref PAT_SCENE: Regex = Regex::new(r"(INT\.|EXT\.) [^a-z]+ - [^a-z]+").unwrap();
-        static ref PAT_SPEECH: Regex = Regex::new(r"([a-z]+(?: \((?:O\.S\.|V\.O\.)\))?):\s+(?:(\([A-Z][^\)]*\) )?([^\(]+))+").unwrap();
+        static ref PAT_SPEECH: Regex = Regex::new(r"(\w+(?: \((?:O\.S\.|V\.O\.)\))?):\s+(?:(\([A-Z][^\)]*\) )?([^\(]+))+").unwrap();
         static ref PAT_EXTRACT: Regex = Regex::new(r"\s*(\([^\)]+\))?((?:\s+[^\(]+)+)").unwrap();
     }
 
-    let (kind, text) = toks;
-    let text = text.join(" ").replace("$title", title);
+    let Segment{ line, mode, text } = segment;
+    let text = text.join(" ")
+                   .replace("$title", &ctx.title)
+                   .replace("$subtitle", &ctx.subtitle);
 
-    match kind {
+    match mode {
         "montage" if  text.is_empty() => Ok("<div class=\"header\">BEGIN MONTAGE:</div>\n".to_string()),
         "mon-end" if  text.is_empty() => Ok("<div class=\"header\">END MONTAGE.</div>\n".to_string()),
-        "TODO"    if  text.is_empty() => Ok("<div class=\"header\">TODO =========================</div>\n".to_string()),
+        "TODO"    if  text.is_empty() => Ok("<div class=\"header\">TODO ==============================</div>\n".to_string()),
+        "TODO"    if !text.is_empty() => Ok(format!("<div class=\"header\">TODO == {}</div>\n", text.to_uppercase())),
         "direct"  if !text.is_empty() => Ok(format!("<div class=\"direct\">{text}</div>\n")),
         "parens"  if !text.is_empty() => Ok(format!("<div class=\"parens\">({text})</div>\n")),
         "speech"  if !text.is_empty() => Ok(format!("<div class=\"speech\">{text}</div>\n")),
@@ -128,27 +135,31 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
         "trans"   if !text.is_empty() => Ok(format!("<div class=\"trans\">{}</div>\n", text.to_uppercase())),
         "chyron"  if !text.is_empty() => Ok(format!("<div class=\"direct\">CHYRON: {text}</div>\n")),
         "scene"   if !text.is_empty() => {
-            *scene += 1;
-            let count = 4 - scene.to_string().len();
-            let pad = vec!["&nbsp;"; count].join("");
-            Ok(format!("<div class=\"scene\"><h1>{pad}{scene} {}</h1></div>\n", text.to_uppercase()))
+            if PAT_SCENE.is_match(&text) {
+                ctx.scene += 1;
+                let count = 4 - ctx.scene.to_string().len();
+                let pad = vec!["&nbsp;"; count].join("");
+                Ok(format!("<div class=\"scene\"><h1>{pad}{} {}</h1></div>\n", ctx.scene, text.to_uppercase()))
+            } else {
+                Err(HtmlError::BadContentError{ line, mode: mode.to_string() })
+            }
         }
 
         "montage"|"mon-end" => {
-            Err(HtmlError::SyntaxError{ linenum, expected: "newline".to_string(), after: format!("mode declaration '{kind}'") })
+            Err(HtmlError::SyntaxError{ line, expected: "newline".to_string(), after: format!("mode declaration '{mode}'") })
         }
         "direct"|"parens"|"speech"|"subhead"|"trans"|"chyron"|"scene" => {
-            Err(HtmlError::SyntaxError{ linenum, expected: "content".to_string(), after: format!("mode declaration '{kind}'") })
+            Err(HtmlError::SyntaxError{ line, expected: "content".to_string(), after: format!("mode declaration '{mode}'") })
         }
 
         _ => {
-            let whole = format!("{} {}", kind, text).trim().to_string();
+            let whole = format!("{} {}", mode, text).trim().to_string();
 
             if PAT_SCENE.is_match(&whole) {
-                *scene += 1;
-                let count = 4 - scene.to_string().len();
+                ctx.scene += 1;
+                let count = 4 - ctx.scene.to_string().len();
                 let pad = vec!["&nbsp;"; count].join("");
-                Ok(format!("<div class=\"scene\"><h1>{pad}{scene} {}</h1></div>\n", whole))
+                Ok(format!("<div class=\"scene\"><h1>{pad}{} {}</h1></div>\n", ctx.scene, whole))
             } else if PAT_SPEECH.is_match(&whole) {
                 let (name, content) = whole.split_once(':').unwrap();
                 let mut result = String::new();
@@ -164,7 +175,7 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
                 }
                 Ok(result)
             } else {
-                Err(HtmlError::SyntaxError { linenum, expected: "mode declaration".to_string(), after: "new line".to_string() })
+                Err(HtmlError::SyntaxError { line, expected: "mode declaration".to_string(), after: "new line".to_string() })
             }
         }
     }
@@ -173,51 +184,52 @@ fn get_line(toks: (&str, Vec<&str>), linenum: usize, scene: &mut u32, title: &st
 
 pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
     let src = fs::read_to_string(&cmd.infile)?;
-    let mut segments = Segments::new(&src);
 
-    let title = segments.next_as_line().ok_or(HtmlError::SyntaxError { linenum: 1, expected: "title".to_string(), after: "beginning".to_string() })?.1.join(" ");
-    let subtitle = segments.next_as_line().ok_or(HtmlError::SyntaxError { linenum: 1, expected: "subtitle".to_string(), after: "subtitle".to_string() })?.1.join(" ");
-    let start = if cmd.range.is_some() {
+    let mut segments = Segments::new(&src);
+    let mut ctx = Context{
+        scene: 0,
+        title: segments.next_whole().ok_or(HtmlError::SyntaxError { line: 1, expected: "title".to_string(), after: "beginning".to_string() })?.1.join(" "),
+        subtitle: segments.next_whole().ok_or(HtmlError::SyntaxError { line: 1, expected: "subtitle".to_string(), after: "subtitle".to_string() })?.1.join(" "),
+    };
+
+    let mut result = if cmd.range.is_some() {
         "<html><head><link rel=\"stylesheet\" href=\"../res/style.css\"/></head><body><div class=\"page\">\n".to_string()
     } else {
         format!("<html><head><link rel=\"stylesheet\" href=\"../res/style.css\"/></head><body><div class=\"page\">\n\
-                 <div class=\"title\"><h1>{title}</h1></div>\n<div class=\"subtitle\"><h2>{subtitle}</h2></div>\n")
+                 <div class=\"title\"><h1>{}</h1></div>\n<div class=\"subtitle\"><h2>{}</h2></div>\n", ctx.title, ctx.subtitle)
     };
-    let end = "</div></body></html>";
 
-    let mut content = String::new();
-    let mut scene = 0u32;
-
-    for (linenum, segment) in segments {
-        let line = get_line(segment, linenum, &mut scene, &title)?;
+    for segment in segments {
+        let line = get_line(segment, &mut ctx)?;
         if let Some(range) = &cmd.range {
-            if range.contains(&scene) {
-                write!(content, "{}", line)?
-            } else if scene > range.end {
+            if range.contains(&ctx.scene) {
+                result.push_str(&line);
+            } else if ctx.scene > range.end {
                 break
             }
         } else {
-            write!(content, "{}", line)?
+            result.push_str(&line);
         }
     }
-
-    let html = format!("{start}{content}{end}");
+    result.push_str("</div></body></html>");
 
     if cmd.temp {
-        fs::write(format!("{}.html", cmd.file_root), &html)?;
+        fs::write(format!("{}.html", cmd.file_root), &result)?;
     }
 
-    Ok(fs::write(&cmd.html, html)?)
+    Ok(fs::write(&cmd.html, result)?)
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    
     fn process(vals: &str) -> Vec<String> {
+        let mut ctx = Context{ scene: 0, title: String::new(), subtitle: String::new() };
+
         Segments::new(vals)
-            .map(|(l, t)| get_line(t, l, &mut 0, "test").expect("get line failed"))
+            .map(|s| get_line(s, &mut ctx).expect("get line failed"))
             .collect()
     }
 
@@ -231,9 +243,9 @@ mod tests {
             \n\
             * another comment");
 
-        assert_eq!(case.next_as_line(), Some((1, vec!["line with content"])));
-        assert_eq!(case.next_as_line(), Some((2, vec!["line with comment"])));
-        assert_eq!(case.next_as_line(), None);
+        assert_eq!(case.next_whole(), Some((1, vec!["line with content"])));
+        assert_eq!(case.next_whole(), Some((2, vec!["line with comment"])));
+        assert_eq!(case.next_whole(), None);
     }
 
     #[test]
@@ -254,13 +266,13 @@ mod tests {
             line with some content * 2 lines because of comment \\ \n\
             and here some more content");
 
-        assert_eq!(case.next_as_line(), Some((0,  vec!["line with content"])));
-        assert_eq!(case.next_as_line(), Some((2,  vec!["line with some content", "and here some more content"])));
-        assert_eq!(case.next_as_line(), Some((5,  vec!["line with content", "more content", "last bit of content"])));
-        assert_eq!(case.next_as_line(), Some((9,  vec!["line with some content", "and here some more content"])));
-        assert_eq!(case.next_as_line(), Some((12, vec!["line with some content"])));
-        assert_eq!(case.next_as_line(), Some((13, vec!["and here some more content"])));
-        assert_eq!(case.next_as_line(), None);
+        assert_eq!(case.next_whole(), Some((0,  vec!["line with content"])));
+        assert_eq!(case.next_whole(), Some((2,  vec!["line with some content", "and here some more content"])));
+        assert_eq!(case.next_whole(), Some((5,  vec!["line with content", "more content", "last bit of content"])));
+        assert_eq!(case.next_whole(), Some((9,  vec!["line with some content", "and here some more content"])));
+        assert_eq!(case.next_whole(), Some((12, vec!["line with some content"])));
+        assert_eq!(case.next_whole(), Some((13, vec!["and here some more content"])));
+        assert_eq!(case.next_whole(), None);
     }
 
     #[test]
@@ -277,13 +289,13 @@ mod tests {
         );
 
         assert_eq!(cases[0], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;1 EXT. LOC - DAY</h1></div>\n".to_string());
-        assert_eq!(cases[1], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;1 EXT. LOC - DAY</h1></div>\n".to_string());
-        assert_eq!(cases[2], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;1 INT. LOC WITH WORDS - TIME WITH WORDS</h1></div>\n".to_string());
-        assert_eq!(cases[3], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;1 EXT. LOC WITH 123 - 12:25PM</h1></div>\n".to_string());
-        assert_eq!(cases[4], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;1 EXT. LOC - DAY</h1></div>\n".to_string());
-        assert_eq!(cases[5], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;1 EXT. LOC - DAY</h1></div>\n".to_string());
-        assert_eq!(cases[6], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;1 INT. LOC WITH WORDS - TIME WITH WORDS</h1></div>\n".to_string());
-        assert_eq!(cases[7], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;1 EXT. LOC WITH 123 - 12:25PM</h1></div>\n".to_string());
+        assert_eq!(cases[1], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;2 EXT. LOC - DAY</h1></div>\n".to_string());
+        assert_eq!(cases[2], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;3 INT. LOC WITH WORDS - TIME WITH WORDS</h1></div>\n".to_string());
+        assert_eq!(cases[3], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;4 EXT. LOC WITH 123 - 12:25PM</h1></div>\n".to_string());
+        assert_eq!(cases[4], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;5 EXT. LOC - DAY</h1></div>\n".to_string());
+        assert_eq!(cases[5], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;6 EXT. LOC - DAY</h1></div>\n".to_string());
+        assert_eq!(cases[6], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;7 INT. LOC WITH WORDS - TIME WITH WORDS</h1></div>\n".to_string());
+        assert_eq!(cases[7], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;8 EXT. LOC WITH 123 - 12:25PM</h1></div>\n".to_string());
     }
 
     #[test]

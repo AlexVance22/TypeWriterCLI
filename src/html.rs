@@ -79,18 +79,18 @@ impl<'a> Segments<'a> {
 
         let mut text = Vec::new();
 
-        while let Some(trimmed) = val.strip_suffix('\\') {
-            text.push(trimmed.trim());
-            (_, val) = self.lines.next()?;
+        while let Some(strip) = val.strip_suffix('\\') {
+            text.push(strip.trim());
+            val = self.lines.next()?.1;
             if val == "***" {
                 self.term = true;
-                return Some((line, text))
+                return Some((line + 1, text))
             }
         }
 
         text.push(val);
 
-        Some((line, text))
+        Some((line + 1, text))
     }
 }
 
@@ -189,7 +189,7 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
     let mut ctx = Context{
         scene: 0,
         title: segments.next_whole().ok_or(HtmlError::SyntaxError { line: 1, expected: "title".to_string(), after: "beginning".to_string() })?.1.join(" "),
-        subtitle: segments.next_whole().ok_or(HtmlError::SyntaxError { line: 1, expected: "subtitle".to_string(), after: "subtitle".to_string() })?.1.join(" "),
+        subtitle: segments.next_whole().ok_or(HtmlError::SyntaxError { line: 2, expected: "subtitle".to_string(), after: "subtitle".to_string() })?.1.join(" "),
     };
 
     let mut result = if cmd.range.is_some() {
@@ -221,6 +221,7 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
 }
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,8 +244,8 @@ mod tests {
             \n\
             * another comment");
 
-        assert_eq!(case.next_whole(), Some((1, vec!["line with content"])));
-        assert_eq!(case.next_whole(), Some((2, vec!["line with comment"])));
+        assert_eq!(case.next_whole(), Some((2, vec!["line with content"])));
+        assert_eq!(case.next_whole(), Some((3, vec!["line with comment"])));
         assert_eq!(case.next_whole(), None);
     }
 
@@ -266,18 +267,18 @@ mod tests {
             line with some content * 2 lines because of comment \\ \n\
             and here some more content");
 
-        assert_eq!(case.next_whole(), Some((0,  vec!["line with content"])));
-        assert_eq!(case.next_whole(), Some((2,  vec!["line with some content", "and here some more content"])));
-        assert_eq!(case.next_whole(), Some((5,  vec!["line with content", "more content", "last bit of content"])));
-        assert_eq!(case.next_whole(), Some((9,  vec!["line with some content", "and here some more content"])));
-        assert_eq!(case.next_whole(), Some((12, vec!["line with some content"])));
-        assert_eq!(case.next_whole(), Some((13, vec!["and here some more content"])));
+        assert_eq!(case.next_whole(), Some((1,  vec!["line with content"])));
+        assert_eq!(case.next_whole(), Some((3,  vec!["line with some content", "and here some more content"])));
+        assert_eq!(case.next_whole(), Some((6,  vec!["line with content", "more content", "last bit of content"])));
+        assert_eq!(case.next_whole(), Some((10,  vec!["line with some content", "and here some more content"])));
+        assert_eq!(case.next_whole(), Some((13, vec!["line with some content"])));
+        assert_eq!(case.next_whole(), Some((14, vec!["and here some more content"])));
         assert_eq!(case.next_whole(), None);
     }
 
     #[test]
     fn scenes() {
-        let cases: Vec<String> = process(
+        let cases = process(
             "EXT. LOC - DAY\n\
                  EXT. LOC - DAY\n\
              INT. LOC WITH WORDS - TIME WITH WORDS\n\
@@ -300,13 +301,27 @@ mod tests {
 
     #[test]
     fn direct() {
-        let cases: Vec<String> = process(
+        let cases = process(
             "direct this is directorial info\n\
              direct         how do i test this"
         );
 
         assert_eq!(cases[0], "<div class=\"direct\">this is directorial info</div>\n".to_string());
         assert_eq!(cases[1], "<div class=\"direct\">how do i test this</div>\n".to_string());
+    }
+    
+    #[test]
+    fn speech() {
+        let cases = process(
+            "alex: I am speaking hello there\n\
+             alex: (Mood) I am speaking hello there\n\
+             alex: I am speaking (Mood) hello there"
+        );
+
+        assert_eq!(cases[0], "<div class=\"name\">ALEX</div>\n<div class=\"speech\">I am speaking hello there</div>\n".to_string());
+        assert_eq!(cases[1], "<div class=\"name\">ALEX</div>\n<div class=\"parens\">(Mood)</div>\n<div class=\"speech\">I am speaking hello there</div>\n".to_string());
+        assert_eq!(cases[2], "<div class=\"name\">ALEX</div>\n<div class=\"speech\">I am speaking</div>\n\
+                              <div class=\"parens\">(Mood)</div>\n<div class=\"speech\">hello there</div>\n".to_string());
     }
 }
 

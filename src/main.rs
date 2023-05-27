@@ -1,7 +1,7 @@
 use std::env;
 use std::process::ExitCode;
 use std::collections::HashSet;
-use scripts::{ CmdInfo, Query, Command };
+use scripts::{ CmdInfo, Command };
 
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -153,15 +153,6 @@ fn cmd_convert(cmd: CmdInfo) -> ExitCode {
     0.into()
 }
 
-fn cmd_status(query: Query) -> ExitCode {
-    if let Err(err) = scripts::get_status(query) {
-        eprintln!("ERROR: falied to fetch requested info: {err}");
-        return 1.into();
-    }
-
-    0.into()
-}
-
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -177,7 +168,6 @@ fn main() -> ExitCode {
                 Command::Help => cmd_help(),
                 Command::Version => cmd_version(),
                 Command::Convert(c) => cmd_convert(c),
-                Command::Status(c) => cmd_status(c),
             }
         }
         Err(err) => {

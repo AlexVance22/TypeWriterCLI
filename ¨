@@ -56,7 +56,9 @@ impl<'a> Segments<'a> {
 
         let (linenum, mut line) = self.lines.next()?;
         
-        if line == "***" { return None }
+        if line == "***" {
+            return None
+        }
 
         let mut result = Vec::new();
 
@@ -83,7 +85,9 @@ impl<'a> Iterator for Segments<'a> {
 
         let (linenum, line) = self.lines.next()?;
         
-        if line == "***" { return None }
+        if line == "***" {
+            return None
+        }
 
         let mut result = Vec::new();
         let (kind, mut line) = match line.split_once(char::is_whitespace) {
@@ -290,7 +294,7 @@ mod tests {
     fn direct() {
         let cases: Vec<String> = process(
             "direct this is directorial info\n\
-             direct         how do i test this"
+             direct how do i test this"
         );
 
         assert_eq!(cases[0], "<div class=\"direct\">this is directorial info</div>\n".to_string());

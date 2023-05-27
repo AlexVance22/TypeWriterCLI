@@ -20,11 +20,6 @@ pub enum HtmlError {
         expected: String,
         after: String,
     },
-    #[error("line {line} - syntax for mode {mode} is invalid")]
-    BadContentError{
-        line: usize,
-        mode: String,
-    },
     #[error("unknown html conversion error")]
     Unknown,
 }
@@ -44,13 +39,6 @@ struct Segment<'a> {
     mode: &'a str,
     text: Vec<&'a str>,
 }
-
-struct Context {
-    scene: u32,
-    title: String,
-    subtitle: String,
-}
-
 
 
 struct Segments<'a> {
@@ -111,8 +99,16 @@ impl<'a> Iterator for Segments<'a> {
 }
 
 
+struct Context {
+    scene: u32,
+    title: String,
+    subtitle: String,
+}
+
+
 fn get_line(segment: Segment, ctx: &mut Context) -> Result<String, HtmlError> {
     lazy_static! {
+        static ref PAT_HEAD: Regex = Regex::new(r"^[^a-z]+$").unwrap();
         static ref PAT_SCENE: Regex = Regex::new(r"(INT\.|EXT\.) [^a-z]+ - [^a-z]+").unwrap();
         static ref PAT_SPEECH: Regex = Regex::new(r"(\w+(?: \((?:O\.S\.|V\.O\.)\))?):\s+(?:(\([A-Z][^\)]*\) )?([^\(]+))+").unwrap();
         static ref PAT_EXTRACT: Regex = Regex::new(r"\s*(\([^\)]+\))?((?:\s+[^\(]+)+)").unwrap();
@@ -134,22 +130,21 @@ fn get_line(segment: Segment, ctx: &mut Context) -> Result<String, HtmlError> {
         "subhead" if !text.is_empty() => Ok(format!("<div class=\"header\"><h2>{}</h2></div>\n", text.to_uppercase())),
         "trans"   if !text.is_empty() => Ok(format!("<div class=\"trans\">{}</div>\n", text.to_uppercase())),
         "chyron"  if !text.is_empty() => Ok(format!("<div class=\"direct\">CHYRON: {text}</div>\n")),
-        "scene"   if !text.is_empty() => {
-            if PAT_SCENE.is_match(&text) {
-                ctx.scene += 1;
-                let count = 4 - ctx.scene.to_string().len();
-                let pad = vec!["&nbsp;"; count].join("");
-                Ok(format!("<div class=\"scene\"><h1>{pad}{} {}</h1></div>\n", ctx.scene, text.to_uppercase()))
-            } else {
-                Err(HtmlError::BadContentError{ line, mode: mode.to_string() })
-            }
+        "scene"   if !text.is_empty() && PAT_SCENE.is_match(&text) => {
+            ctx.scene += 1;
+            let count = 4 - ctx.scene.to_string().len();
+            let pad = vec!["&nbsp;"; count].join("");
+            Ok(format!("<div class=\"scene\"><h1>{pad}{} {}</h1></div>\n", ctx.scene, text.to_uppercase()))
         }
-
+        
         "montage"|"mon-end" => {
             Err(HtmlError::SyntaxError{ line, expected: "newline".to_string(), after: format!("mode declaration '{mode}'") })
         }
-        "direct"|"parens"|"speech"|"subhead"|"trans"|"chyron"|"scene" => {
+        "direct"|"parens"|"speech"|"subhead"|"trans"|"chyron" => {
             Err(HtmlError::SyntaxError{ line, expected: "content".to_string(), after: format!("mode declaration '{mode}'") })
+        }
+        "scene" => {
+            Err(HtmlError::SyntaxError{ line, expected: "scene heading".to_string(), after: "scene declaration".to_string() })
         }
 
         _ => {
@@ -160,6 +155,8 @@ fn get_line(segment: Segment, ctx: &mut Context) -> Result<String, HtmlError> {
                 let count = 4 - ctx.scene.to_string().len();
                 let pad = vec!["&nbsp;"; count].join("");
                 Ok(format!("<div class=\"scene\"><h1>{pad}{} {}</h1></div>\n", ctx.scene, whole))
+            } else if PAT_HEAD.is_match(&whole) {
+                Ok(format!("<div class=\"header\">{}</div>", whole))
             } else if PAT_SPEECH.is_match(&whole) {
                 let (name, content) = whole.split_once(':').unwrap();
                 let mut result = String::new();
@@ -188,8 +185,8 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
     let mut segments = Segments::new(&src);
     let mut ctx = Context{
         scene: 0,
-        title: segments.next_whole().ok_or(HtmlError::SyntaxError { line: 1, expected: "title".to_string(), after: "beginning".to_string() })?.1.join(" "),
-        subtitle: segments.next_whole().ok_or(HtmlError::SyntaxError { line: 2, expected: "subtitle".to_string(), after: "subtitle".to_string() })?.1.join(" "),
+        title: segments.next_whole().ok_or(HtmlError::SyntaxError{ line: 1, expected: "title".to_string(), after: "beginning".to_string() })?.1.join(" "),
+        subtitle: segments.next_whole().ok_or(HtmlError::SyntaxError{ line: 2, expected: "subtitle".to_string(), after: "title".to_string() })?.1.join(" "),
     };
 
     let mut result = if cmd.range.is_some() {

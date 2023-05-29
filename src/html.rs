@@ -93,7 +93,7 @@ impl<'a> Iterator for Segments<'a> {
             text.insert(0, rest.trim());
             Some(Segment{ line, mode, text })
         } else {
-            Some(Segment{ line, mode: first.trim(), text })
+            Some(Segment{ line, mode: first, text: Vec::new() })
         }
     }
 }
@@ -267,7 +267,7 @@ mod tests {
         assert_eq!(case.next_whole(), Some((1,  vec!["line with content"])));
         assert_eq!(case.next_whole(), Some((3,  vec!["line with some content", "and here some more content"])));
         assert_eq!(case.next_whole(), Some((6,  vec!["line with content", "more content", "last bit of content"])));
-        assert_eq!(case.next_whole(), Some((10,  vec!["line with some content", "and here some more content"])));
+        assert_eq!(case.next_whole(), Some((10, vec!["line with some content", "and here some more content"])));
         assert_eq!(case.next_whole(), Some((13, vec!["line with some content"])));
         assert_eq!(case.next_whole(), Some((14, vec!["and here some more content"])));
         assert_eq!(case.next_whole(), None);

@@ -274,6 +274,21 @@ mod tests {
     }
 
     #[test]
+    fn simple() {
+        let cases = process(
+            "direct this is directorial info\n\
+             direct         how do i test this\n\
+             trans  CUT TO\n\
+             trans          CUT TO"
+        );
+
+        assert_eq!(cases[0], "<div class=\"direct\">this is directorial info</div>\n".to_string());
+        assert_eq!(cases[1], "<div class=\"direct\">how do i test this</div>\n".to_string());
+        assert_eq!(cases[2], "<div class=\"trans\">CUT TO</div>\n".to_string());
+        assert_eq!(cases[3], "<div class=\"trans\">CUT TO</div>\n".to_string());
+    }
+
+    #[test]
     fn scenes() {
         let cases = process(
             "EXT. LOC - DAY\n\
@@ -294,17 +309,6 @@ mod tests {
         assert_eq!(cases[5], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;6 EXT. LOC - DAY</h1></div>\n".to_string());
         assert_eq!(cases[6], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;7 INT. LOC WITH WORDS - TIME WITH WORDS</h1></div>\n".to_string());
         assert_eq!(cases[7], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;8 EXT. LOC WITH 123 - 12:25PM</h1></div>\n".to_string());
-    }
-
-    #[test]
-    fn direct() {
-        let cases = process(
-            "direct this is directorial info\n\
-             direct         how do i test this"
-        );
-
-        assert_eq!(cases[0], "<div class=\"direct\">this is directorial info</div>\n".to_string());
-        assert_eq!(cases[1], "<div class=\"direct\">how do i test this</div>\n".to_string());
     }
     
     #[test]

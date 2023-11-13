@@ -3,8 +3,8 @@ use std::{
     fmt::Write,
 };
 use lazy_static::lazy_static;
-use regex::Regex;
 use thiserror::Error;
+use regex::Regex;
 use crate::CmdInfo;
 
 
@@ -26,8 +26,8 @@ pub enum HtmlError {
 
 
 pub fn trim_ignored((num, line): (usize, &str)) -> (usize, &str) {
-    if line.contains("* ") {
-        (num, line.split("* ").next().unwrap().trim())
+    if let Some((start, _)) = line.split_once("* ") {
+        (num, start.trim())
     } else {
         (num, line.trim())
     }
@@ -62,7 +62,7 @@ impl<'a> Segments<'a> {
         if self.term { return None }
 
         let (line, mut val) = self.lines.next()?;
-        
+
         if val == "***" { return None }
 
         let mut text = Vec::new();
@@ -99,6 +99,7 @@ impl<'a> Iterator for Segments<'a> {
 }
 
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Context {
     scene: u32,
     title: String,
@@ -124,9 +125,9 @@ fn get_line(segment: Segment, ctx: &mut Context) -> Result<String, HtmlError> {
         "mon-end" if  text.is_empty() => Ok("<div class=\"header\">END MONTAGE.</div>\n".to_string()),
         "TODO"    if  text.is_empty() => Ok("<div class=\"header\">TODO ==============================</div>\n".to_string()),
         "TODO"    if !text.is_empty() => Ok(format!("<div class=\"header\">TODO == {}</div>\n", text.to_uppercase())),
-        "direct"  if !text.is_empty() => Ok(format!("<div class=\"direct\">{text}</div>\n")),
-        "parens"  if !text.is_empty() => Ok(format!("<div class=\"parens\">({text})</div>\n")),
-        "speech"  if !text.is_empty() => Ok(format!("<div class=\"speech\">{text}</div>\n")),
+        "direct"  if !text.is_empty() => Ok(format!("<div class=\"direct\">{}</div>\n", text)),
+        "parens"  if !text.is_empty() => Ok(format!("<div class=\"parens\">({})</div>\n", text)),
+        "speech"  if !text.is_empty() => Ok(format!("<div class=\"speech\">{}</div>\n", text)),
         "subhead" if !text.is_empty() => Ok(format!("<div class=\"header\"><h2>{}</h2></div>\n", text.to_uppercase())),
         "trans"   if !text.is_empty() => Ok(format!("<div class=\"trans\">{}</div>\n", text.to_uppercase())),
         "chyron"  if !text.is_empty() => Ok(format!("<div class=\"direct\">CHYRON: {text}</div>\n")),
@@ -134,14 +135,13 @@ fn get_line(segment: Segment, ctx: &mut Context) -> Result<String, HtmlError> {
             ctx.scene += 1;
             let count = 4 - ctx.scene.to_string().len();
             let pad = vec!["&nbsp;"; count].join("");
-            Ok(format!("<div class=\"scene\"><h1>{pad}{} {}</h1></div>\n", ctx.scene, text.to_uppercase()))
+            Ok(format!("<div class=\"scene\"><h1>{}{} {}</h1></div>\n", pad, ctx.scene, text.to_uppercase()))
         }
-        
         "montage"|"mon-end" => {
-            Err(HtmlError::SyntaxError{ line, expected: "newline".to_string(), after: format!("mode declaration '{mode}'") })
+            Err(HtmlError::SyntaxError{ line, expected: "newline".to_string(), after: format!("montage delimiter '{mode}'") })
         }
         "direct"|"parens"|"speech"|"subhead"|"trans"|"chyron" => {
-            Err(HtmlError::SyntaxError{ line, expected: "content".to_string(), after: format!("mode declaration '{mode}'") })
+            Err(HtmlError::SyntaxError{ line, expected: "content".to_string(), after: format!("block declaration '{mode}'") })
         }
         "scene" => {
             Err(HtmlError::SyntaxError{ line, expected: "scene heading".to_string(), after: "scene declaration".to_string() })
@@ -153,8 +153,8 @@ fn get_line(segment: Segment, ctx: &mut Context) -> Result<String, HtmlError> {
             if PAT_SCENE.is_match(&whole) {
                 ctx.scene += 1;
                 let count = 4 - ctx.scene.to_string().len();
-                let pad = vec!["&nbsp;"; count].join("");
-                Ok(format!("<div class=\"scene\"><h1>{pad}{} {}</h1></div>\n", ctx.scene, whole))
+                let pad = "&nbsp".repeat(count);
+                Ok(format!("<div class=\"scene\"><h1>{}{} {}</h1></div>\n", pad, ctx.scene, whole))
             } else if PAT_HEAD.is_match(&whole) {
                 Ok(format!("<div class=\"header\">{}</div>", whole))
             } else if PAT_SPEECH.is_match(&whole) {
@@ -222,9 +222,9 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn process(vals: &str) -> Vec<String> {
-        let mut ctx = Context{ scene: 0, title: String::new(), subtitle: String::new() };
+        let mut ctx = Context::default();
 
         Segments::new(vals)
             .map(|s| get_line(s, &mut ctx).expect("get line failed"))
@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(cases[6], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;7 INT. LOC WITH WORDS - TIME WITH WORDS</h1></div>\n".to_string());
         assert_eq!(cases[7], "<div class=\"scene\"><h1>&nbsp;&nbsp;&nbsp;8 EXT. LOC WITH 123 - 12:25PM</h1></div>\n".to_string());
     }
-    
+
     #[test]
     fn speech() {
         let cases = process(

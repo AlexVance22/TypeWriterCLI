@@ -1,6 +1,8 @@
-use std::env;
-use std::process::ExitCode;
-use std::collections::HashSet;
+use std::{
+    env,
+    io::Write,
+    process::ExitCode,
+};
 use scripts::{ CmdInfo, Command };
 
 
@@ -33,7 +35,7 @@ fn get_command(args: &[String]) -> Result<Command, String> {
         return Err("ERROR: input file not provided".into())
     }
     if let Some(Some(o)) = input.get("-o") {
-        cmd.infile = o.as_string().unwrap().to_owned();
+        cmd.outfile = o.as_string().unwrap().to_owned();
     } else {
         return Err("ERROR: output file not provided".into())
     }
@@ -63,76 +65,10 @@ fn get_command(args: &[String]) -> Result<Command, String> {
             .unwrap()
             .to_string();
 
-    cmd.html = format!("{}/user/temp.html", cmd.exe_loc);
+    cmd.html = format!("{}/../../user/temp.html", cmd.exe_loc);
 
     Ok(Command::Convert(cmd))
 }
-
-fn _get_command(args: &[String]) -> Result<Command, String> {
-    let valid: HashSet<&str> = ["-v", "--version", "-h", "--help", "--temp", "--nopen", "-i", "-o", "-s", "--scenes"].into_iter().collect();
-    for a in args {
-        if a.starts_with('-') && !valid.contains(a.as_str()) {
-            return Err(format!("ERROR: invalid option specified: {a}"))
-        }
-    }
-
-    if args.contains(&"-h".to_string()) || args.contains(&"--help".to_string()) {
-        return Ok(Command::Help)
-    }
-    if args.contains(&"-v".to_string()) || args.contains(&"--version".to_string()) {
-        return Ok(Command::Version)
-    }
-
-    let mut cmd: CmdInfo = CmdInfo::default();
-
-    if let Some(i) = args.iter().position(|s| s == "-i") {
-        cmd.infile = args.get(i + 1).ok_or("ERROR: input file not provided")?.clone();
-    } else {
-        return Err("ERROR: input file not provided".to_string())
-    }
-    if let Some(i) = args.iter().position(|s| s == "-o") {
-        cmd.outfile = args.get(i + 1).ok_or("ERROR: output file not provided")?.clone();
-    } else {
-        return Err("ERROR: output file not provided".to_string())
-    }
-
-    if args.contains(&"--temp".to_string()) {
-        cmd.temp = true;
-    }
-
-    if args.contains(&"--nopen".to_string()) {
-        cmd.nopen = true;
-    }
-
-    if let Some(i) = args.iter().position(|s| s == "-s" || s == "--scenes") {
-        let range = args.get(i + 1).ok_or("ERROR: scene spec declared but not provided")?.clone();
-
-        if let Some(j) = range.find('-') {
-            let start: u32 = range[0..j].parse().map_err(|_| "ERROR: range argument was not integer".to_string())?;
-            let stop: u32 = range[(j+1)..range.len()].parse().map_err(|_| "ERROR: range argument was not integer".to_string())?;
-            cmd.range = Some(start..(stop+1));
-        } else {
-            let start: u32 = range.parse().map_err(|_| "ERROR: scene argument was not integer".to_string())?;
-            cmd.range = Some(start..(start+1));
-        }
-    }
-
-    cmd.file_root = cmd.infile.strip_suffix(".txt").ok_or("ERROR: expected '.txt' file as input")?.to_string();
-
-    cmd.exe_loc = env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .as_os_str()
-            .to_str()
-            .unwrap()
-            .to_string();
-
-    cmd.html = format!("{}/user/temp.html", cmd.exe_loc);
-
-    Ok(Command::Convert(cmd))
-}
-
 
 fn cmd_help() -> ExitCode {
     cmd_version();
@@ -184,6 +120,7 @@ fn cmd_convert(cmd: CmdInfo) -> ExitCode {
     print!("Generating html...\t");
 
     if let Err(err) = scripts::gen_html(&cmd) {
+        let _ = std::io::stdout().flush();
         eprintln!("ERROR: falied to generate html: {err}");
         return 2.into();
     }
@@ -237,3 +174,4 @@ fn main() -> ExitCode {
         }
     }
 }
+

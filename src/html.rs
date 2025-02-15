@@ -211,7 +211,7 @@ pub fn gen_html(cmd: &CmdInfo) -> Result<(), HtmlError> {
     result.push_str("</div></body></html>");
 
     if cmd.temp {
-        fs::write(format!("{}.html", cmd.file_root), &result)?;
+        fs::write(format!("user/{}.html", cmd.file_root), &result)?;
     }
 
     Ok(fs::write(&cmd.html, result)?)

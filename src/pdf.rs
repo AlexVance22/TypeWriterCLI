@@ -2,7 +2,7 @@ use std::process::{ Command, ExitStatus };
 
 
 pub fn gen_pdf(cmd: &super::CmdInfo) -> std::io::Result<ExitStatus> {
-    let program = format!("{}/wkhtmltopdf.exe", cmd.exe_loc);
+    let program = format!("{}/../../wkhtmltopdf.exe", cmd.exe_loc);
 
     Command::new(program)
         .args(["--margin-top", "1in"])
@@ -18,3 +18,4 @@ pub fn gen_pdf(cmd: &super::CmdInfo) -> std::io::Result<ExitStatus> {
         .arg(&cmd.outfile)
         .status()
 }
+
